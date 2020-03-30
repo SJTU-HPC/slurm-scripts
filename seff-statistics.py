@@ -50,10 +50,9 @@ def get_low_efficience_jobs(all_cpu_jobs):
         # handle `WARNING: Efficiency statistics may be misleading for RUNNING jobs.`
         if ('COMPLETED' in status) and cpu_efficiency < low_cpu and mem_efficiency < low_memory and (
                 'misleading' not in seff_result):
-            if acct in low_efficience_jobs:
-                low_efficience_jobs[acct][slurm_jobid] = (workdir, seff_result)
-            else:
+            if acct not in low_efficience_jobs:
                 low_efficience_jobs[acct] = {}
+            low_efficience_jobs[acct][slurm_jobid] = (workdir, seff_result)
     return low_efficience_jobs
 
 
