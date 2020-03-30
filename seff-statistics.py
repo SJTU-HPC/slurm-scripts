@@ -4,7 +4,7 @@ import subprocess
 
 low_cpu = 25
 low_memory = 25
-
+partition = 'cpu' # 'cpu,small'
 
 def get_all_cpu_jobs(acct=None, user=None, starttime=None, endtime=None):
     parameter = ''
@@ -12,7 +12,7 @@ def get_all_cpu_jobs(acct=None, user=None, starttime=None, endtime=None):
     parameter += '-u {} '.format(user) if user else ''
     parameter += '-S {} '.format(starttime) if starttime else ''
     parameter += '-E {} '.format(endtime) if endtime else ''
-    sacct_command = "sacct --partition cpu,small -a {}".format(parameter)
+    sacct_command = "sacct --partition {} -a {}".format(partition, parameter)
     seff_result = subprocess.check_output(sacct_command, shell=True).decode()
     # parser the output of sacct
     seff_result = seff_result.split('\n')[2:-1]
@@ -71,7 +71,7 @@ def main():
         print(acct)
         for jobid in low_efficience_jobs[acct]:
             workdir, seff_result = low_efficience_jobs[acct][jobid]
-            # print(seff_result)
+            print(seff_result)
             print("WorkDir: {}".format(workdir))
             print('-'*20)
         print('='*30)

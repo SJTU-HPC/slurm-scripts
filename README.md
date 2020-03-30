@@ -9,7 +9,7 @@ And the scipts is Python 2/3 compatible without dependency.
 You can find help info with `python seff-statistics.py -h`. And here is an example:
 
 ```shell
-$ python seff-statistics.py -A acct-hpc -u hpccsg,hpc-jianwen -S 2020-03-20T11:00:00 -E 2020-03-24
+$ python seff-statistics.py -S `date +"%Y-%m-%dT%T" -d '4 hour ago'` -E `date +"%Y-%m-%dT%T"`
 ```
 
 You can control the threshold of the efficiency jobs with two variable:
