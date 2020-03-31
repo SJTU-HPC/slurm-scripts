@@ -4,7 +4,29 @@ import subprocess
 
 low_cpu = 25
 low_memory = 25
-partition = 'cpu' # 'cpu,small'
+low_time = 60
+partition = 'cpu'   # 'cpu,small'
+
+
+def print_suggestion():
+    print("Suggestion: ")
+    print("1. Use fewer nodes if your jobs are multi-node.")
+    print("2. Use fewer cores, and submit your job to partition **small**.")
+
+
+def print_low_jobs(low_efficience_jobs):
+    print('='*30)
+    for acct in low_efficience_jobs:
+        print(acct+'\n')
+        for jobid in low_efficience_jobs[acct]:
+            workdir, seff_result = low_efficience_jobs[acct][jobid]
+            print('-'*20)
+            print(seff_result.rstrip())
+            print("WorkDir: {}".format(workdir))
+        print('-'*20)
+        print_suggestion()
+        print('='*30)
+
 
 def get_all_cpu_jobs(acct=None, user=None, starttime=None, endtime=None):
     parameter = ''
@@ -12,16 +34,26 @@ def get_all_cpu_jobs(acct=None, user=None, starttime=None, endtime=None):
     parameter += '-u {} '.format(user) if user else ''
     parameter += '-S {} '.format(starttime) if starttime else ''
     parameter += '-E {} '.format(endtime) if endtime else ''
-    sacct_command = "sacct --partition {} -a {}".format(partition, parameter)
-    seff_result = subprocess.check_output(sacct_command, shell=True).decode()
+    sacct_command = "sacct --partition {} -a {} -o jobid,account,user,state,elapsed".format(partition, parameter)
+    sacct_result = subprocess.check_output(sacct_command, shell=True).decode()
     # parser the output of sacct
-    seff_result = seff_result.split('\n')[2:-1]
+    sacct_result = sacct_result.split('\n')[2:-1]
     all_cpu_jobs = []
-    for line in seff_result:
+    for line in sacct_result:
+        if len(line.split()) == 4:
+            continue
         # handle array job
-        job = int(line.split()[0].split('.')[0].split('_')[0])
-        if job not in all_cpu_jobs:
-            all_cpu_jobs.append(job)
+        # job from acct-hpc or student
+        if 'acct-hpc' in line or 'stu' in line:
+            continue
+        if 'COMPLETED' in line:
+            # job too short
+            elapsed_hour, elapsed_min = line.split()[-1].split(':')[:2]
+            if elapsed_hour == '00' and elapsed_min == '00':
+                continue
+            job = int(line.split()[0].split('.')[0].split('_')[0])
+            if job not in all_cpu_jobs:
+                all_cpu_jobs.append(job)
     return all_cpu_jobs
 
 
@@ -48,7 +80,7 @@ def get_low_efficience_jobs(all_cpu_jobs):
             continue
         acct, workdir, status, cpu_efficiency, mem_efficiency, seff_result = get_seff(slurm_jobid)
         # handle `WARNING: Efficiency statistics may be misleading for RUNNING jobs.`
-        if ('COMPLETED' in status) and cpu_efficiency < low_cpu and mem_efficiency < low_memory and (
+        if cpu_efficiency < low_cpu and mem_efficiency < low_memory and (
                 'misleading' not in seff_result):
             if acct not in low_efficience_jobs:
                 low_efficience_jobs[acct] = {}
@@ -66,14 +98,7 @@ def main():
     all_cpu_jobs = get_all_cpu_jobs(args.accounts, args.user, args.starttime,
                                     args.endtime)
     low_efficience_jobs = get_low_efficience_jobs(all_cpu_jobs)
-    for acct in low_efficience_jobs:
-        print(acct)
-        for jobid in low_efficience_jobs[acct]:
-            workdir, seff_result = low_efficience_jobs[acct][jobid]
-            print(seff_result)
-            print("WorkDir: {}".format(workdir))
-            print('-'*20)
-        print('='*30)
+    print_low_jobs(low_efficience_jobs)
 
 
 if __name__ == "__main__":
