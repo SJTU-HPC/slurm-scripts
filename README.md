@@ -1,15 +1,18 @@
-# Scripts for efficiency statistics of SLURM jobs
+# JobCritic
 
-The scripts base on the output of `sacct` and `seff` and print the low efficiency jobs in STDOUT.
-So make sure the `sacct` and `seff` work fine in your shell.
+`JobCritic` contain core fuctions of job efficiency analysis for SLURM.
+
+* Job efficiency analysis based on `sacct` and `seff`
+* Deliver email for Internal or User use `smail`
+
 And the scipts is Python 2/3 compatible without dependency.
 
 ## Usage
 
-You can find help info with `python seff-statistics.py -h`. And here is an example:
+You can find help info with `python job-statistics.py -h`. And here is an example:
 
 ```shell
-$ python seff-statistics.py -S `date +"%Y-%m-%dT%T" -d '4 hour ago'` -E `date +"%Y-%m-%dT%T"`
+$ python job-statistics.py -S `date +"%Y-%m-%dT%T" -d '4 hour ago'` -E `date +"%Y-%m-%dT%T"`
 ```
 
 You can control the threshold of the efficiency jobs with two variable:
