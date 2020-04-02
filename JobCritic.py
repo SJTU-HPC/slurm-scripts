@@ -28,6 +28,29 @@ class MailDeliver():
             logger.info("Delivered email to {}".format(recv_email))
 
 
+class SlurmJob():
+    def __init__(self, jobid, account, user, state, elapsed):
+        self.jobid = jobid
+        self.account = account
+        self.user = user
+        self.state = state
+        self.elapsed = elapsed
+
+    def seff(self):
+        command = "seff {}".format(self.jobid)
+        self.seff_result = subprocess.check_output(command, shell=True).decode()
+        try:
+            self.cpu_efficiency = float(re.search(r'CPU Efficiency: (.*?)%', self.seff_result).group(1))
+            self.mem_efficiency = float(re.search(r'Memory Efficiency: (.*?)%', self.seff_result).group(1))
+        except Exception:
+            logging.error(traceback.format_exc())
+
+    def sacct(self):
+        command = "sacct -j {} -p -o ACCOUNT,WorkDir,NNodes,NCPUS".format(self.jobid)
+        sacct_result = subprocess.check_output(command, shell=True).decode()
+        self.account, self.workdir, self.nnodes, self.ncpus = sacct_result.split()[1].split('|')[:4]
+
+
 class JobCritic():
 
     def __init__(self,
@@ -52,12 +75,17 @@ class JobCritic():
         self.init_logger(debug)
         self.sacct_query = ['jobid', 'account', 'user', 'state', 'elapsed']
         self.mailman = MailDeliver()
-        self.filters = [
-            lambda job: job['jobid'] > 100000,  # for roll-history jobs
-            lambda job: job['account'] != 'acct-hpc',
-            lambda job: 'stu' not in job['user'],
-            lambda job: 'COMPLETED' in job['state'],
-            lambda job: job['elapsed'] > self.min_elapse  # job['elapsed'] large than 1 minute
+        self.valid_filters = [
+            lambda job: job.jobid > 100000,  # for roll-history jobs
+            lambda job: job.account != 'acct-hpc',
+            lambda job: 'stu' not in job.user,
+            lambda job: 'COMPLETED' in job.state,
+            lambda job: job.elapsed > self.min_elapse  # job.elapsed large than 1 minute
+        ]
+
+        self.efficiency_filters = [
+            lambda job: job.cpu_efficiency < 25,
+            lambda job: job.mem_efficiency < 25,
         ]
 
         self.internal_email = "hpc@sjtu.edu.cn"
@@ -70,11 +98,11 @@ class JobCritic():
         if debug:
             self.logger.setLevel(level=logging.DEBUG)
 
-    def print_filters(self):
+    def print_filters(self, filters):
         self.logger.debug("=" * 50)
-        self.logger.debug("All filters:")
+        self.logger.debug("Apply filters:")
         self.logger.debug("-" * 50)
-        for i_filter, filter in enumerate(self.filters):
+        for i_filter, filter in enumerate(filters):
             self.logger.debug("[{}]: {}".format(i_filter, inspect.getsource(filter).strip()))
         self.logger.debug("=" * 50)
 
@@ -89,10 +117,10 @@ class JobCritic():
                                                                   parameter)
         return sacct_command
 
-    def all_filters(self, x):
+    def applyfilters(self, filters, obj):
         final_results = True
-        for filter in self.filters:
-            final_results = final_results and filter(x)
+        for filter in filters:
+            final_results = final_results and filter(obj)
         return final_results
 
     def get_valid_jobs(self, apply_filters=True):
@@ -111,58 +139,37 @@ class JobCritic():
                     days, hours = hours.split('-')
                     hours = int(hours) + 24 * int(days)
                 mins = 60 * int(hours) + int(mins)
-                elapsed = elapsed.split('_')
-                all_jobs[int(jobid)] = {
-                    'jobid': int(jobid),
-                    'account': account,
-                    'user': user,
-                    'state': state,
-                    'elapsed': mins
-                }
+                all_jobs[int(jobid)] = SlurmJob(int(jobid), account, user, state, mins)
 
         self.logger.info("There are {} jobs before apply filters.".format(len(all_jobs)))
         if apply_filters:
-            self.print_filters()
-            all_jobs = {job: all_jobs[job] for job in all_jobs if self.all_filters(all_jobs[job])}
+            self.print_filters(self.valid_filters)
+            all_jobs = {job: all_jobs[job] for job in all_jobs if self.applyfilters(self.valid_filters, all_jobs[job])}
         self.logger.info("There are {} valid jobs.".format(len(all_jobs)))
 
         return all_jobs
-
-    def ineffective_critic(self, job_id):
-        command = "seff {}".format(job_id)
-        seff_result = subprocess.check_output(command, shell=True).decode()
-        try:
-            cpu_efficiency = float(re.search(r'CPU Efficiency: (.*?)%', seff_result).group(1))
-            mem_efficiency = float(re.search(r'Memory Efficiency: (.*?)%', seff_result).group(1))
-        except Exception:
-            logging.error(traceback.format_exc())
-        return (cpu_efficiency < self.low_cpu and mem_efficiency < self.low_memory), seff_result
-
-    def get_workdir(self, slurm_jobid):
-        command = "sacct -j {} -p -o ACCOUNT,WorkDir,NNodes,NCPUS".format(slurm_jobid)
-        sacct_result = subprocess.check_output(command, shell=True).decode()
-        acct, workdir, nnodes, ncpus = sacct_result.split()[1].split('|')[:4]
-        return acct, workdir, nnodes, ncpus
 
     def get_ineffective_jobs(self):
         all_jobs = self.get_valid_jobs()
         low_efficience_jobs = {}
         self.logger.info("Finding ineffective jobs with seff.")
+        self.print_filters(self.efficiency_filters)
         num_low_efficience_jobs = 0
         for job_id in all_jobs:
-            flag, seff_result = self.ineffective_critic(job_id)
-            if flag:
-                acct, workdir, nnodes, ncpus = self.get_workdir(job_id)
-                if acct not in low_efficience_jobs:
-                    low_efficience_jobs[acct] = {}
-                self.logger.debug("Find ineffective job [{}]: {}".format(job_id, acct))
-                low_efficience_jobs[acct][job_id] = (workdir, seff_result, nnodes, ncpus)
+            this_job = all_jobs[job_id]
+            this_job.seff()
+            if self.applyfilters(self.efficiency_filters, this_job):
+                this_job.sacct()
+                if this_job.account not in low_efficience_jobs:
+                    low_efficience_jobs[this_job.account] = {}
+                self.logger.debug("Find ineffective job [{}]: {}".format(job_id, this_job.account))
+                low_efficience_jobs[this_job.account][job_id] = this_job
                 num_low_efficience_jobs += 1
         self.logger.info("There are {} inefficent jobs from {} user.".format(
             num_low_efficience_jobs, len(low_efficience_jobs)))
         return low_efficience_jobs
 
-    def get_suggestion(self, nnodes, ncpus):
+    def get_suggestion(self):
         str = "Suggestion:\n \
 1. Use fewer nodes if your jobs are multi-node.\n \
 2. Use fewer cores, and submit your job to partition **small**."
@@ -177,12 +184,12 @@ class JobCritic():
         for acct in low_efficience_jobs:
             email_content += acct + '\n'
             for jobid in low_efficience_jobs[acct]:
-                workdir, seff_result, nnodes, ncpus = low_efficience_jobs[acct][jobid]
+                this_job = low_efficience_jobs[acct][jobid]
                 email_content += '-' * 20 + '\n'
-                email_content += seff_result.rstrip() + '\n'
-                email_content += "WorkDir: {}".format(workdir) + '\n'
+                email_content += this_job.seff_result.rstrip() + '\n'
+                email_content += "WorkDir: {}".format(this_job.workdir) + '\n'
             email_content += '-' * 20 + '\n'
-            email_content += self.get_suggestion(nnodes, ncpus) + '\n'
+            email_content += self.get_suggestion() + '\n'
             email_content += '=' * 30 + '\n'
         self.mailman.send_email(self.internal_email, email_subject, email_header + email_content,
                                 self.logger)

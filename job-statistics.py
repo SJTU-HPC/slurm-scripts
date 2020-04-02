@@ -22,13 +22,13 @@ def main():
 
     # set debug=False to quiet STD output
     watcher = JobCritic(starttime=args.starttime,
-                         endtime=args.endtime,
-                         acct=args.accounts,
-                         user=args.user,
-                         min_elapse=min_elapse,
-                         low_cpu=low_cpu,
-                         low_memory=low_memory,
-                         debug=args.debug)
+                        endtime=args.endtime,
+                        acct=args.accounts,
+                        user=args.user,
+                        min_elapse=min_elapse,
+                        low_cpu=low_cpu,
+                        low_memory=low_memory,
+                        debug=args.debug)
 
     # you can add or modefy filters diretly
     # watcher.filters.append(lambda job: job['xxx'] > xxx)
