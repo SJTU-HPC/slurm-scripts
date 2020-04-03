@@ -49,6 +49,7 @@ class SlurmJob():
         command = "sacct -j {} -p -o ACCOUNT,WorkDir,NNodes,NCPUS".format(self.jobid)
         sacct_result = subprocess.check_output(command, shell=True).decode()
         self.account, self.workdir, self.nnodes, self.ncpus = sacct_result.split()[1].split('|')[:4]
+        self.nnodes, self.ncpus = int(self.nnodes), int(self.ncpus)
 
 
 class JobCritic():
@@ -88,7 +89,7 @@ class JobCritic():
             lambda job: job.mem_efficiency < 25,
         ]
 
-        self.internal_email = "hpc@sjtu.edu.cn"
+        self.internal_email = "hpcalarm@sjtu.edu.cn"
 
     def init_logger(self, debug):
         ch = logging.StreamHandler()
@@ -98,7 +99,7 @@ class JobCritic():
         if debug:
             self.logger.setLevel(level=logging.DEBUG)
 
-    def print_filters(self, filters):
+    def filters_info(self, filters):
         self.logger.debug("=" * 50)
         self.logger.debug("Apply filters:")
         self.logger.debug("-" * 50)
@@ -143,7 +144,7 @@ class JobCritic():
 
         self.logger.info("There are {} jobs before apply filters.".format(len(all_jobs)))
         if apply_filters:
-            self.print_filters(self.valid_filters)
+            self.filters_info(self.valid_filters)
             all_jobs = {job: all_jobs[job] for job in all_jobs if self.applyfilters(self.valid_filters, all_jobs[job])}
         self.logger.info("There are {} valid jobs.".format(len(all_jobs)))
 
@@ -153,7 +154,7 @@ class JobCritic():
         all_jobs = self.get_valid_jobs()
         low_efficience_jobs = {}
         self.logger.info("Finding ineffective jobs with seff.")
-        self.print_filters(self.efficiency_filters)
+        self.filters_info(self.efficiency_filters)
         num_low_efficience_jobs = 0
         for job_id in all_jobs:
             this_job = all_jobs[job_id]
@@ -169,8 +170,13 @@ class JobCritic():
             num_low_efficience_jobs, len(low_efficience_jobs)))
         return low_efficience_jobs
 
-    def get_suggestion(self):
-        str = "Suggestion:\n \
+    def get_suggestion(self, nnodes, ncpus):
+        if nnodes > 1:
+            str = "Suggestion: Please try to use fewer nodes to run your job."
+        elif nnodes == 1 and ncpus == 40:
+            str = "Suggestion: Please try to use fewer cores and submit your job to **small** partition."
+        else:
+            str = "Suggestion:\n \
 1. Use fewer nodes if your jobs are multi-node.\n \
 2. Use fewer cores, and submit your job to partition **small**."
 
@@ -183,13 +189,13 @@ class JobCritic():
         email_content = '=' * 30 + '\n'
         for acct in low_efficience_jobs:
             email_content += acct + '\n'
+            email_content += "You have {} inefficiency jobs.".format(len(low_efficience_jobs[acct])) + '\n'
             for jobid in low_efficience_jobs[acct]:
                 this_job = low_efficience_jobs[acct][jobid]
                 email_content += '-' * 20 + '\n'
                 email_content += this_job.seff_result.rstrip() + '\n'
                 email_content += "WorkDir: {}".format(this_job.workdir) + '\n'
-            email_content += '-' * 20 + '\n'
-            email_content += self.get_suggestion() + '\n'
+                email_content += self.get_suggestion(this_job.nnodes, this_job.ncpus) + '\n'
             email_content += '=' * 30 + '\n'
         self.mailman.send_email(self.internal_email, email_subject, email_header + email_content,
                                 self.logger)
