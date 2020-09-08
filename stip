@@ -1,0 +1,58 @@
+#!/usr/bin/env python3
+
+import re
+import logging
+import argparse
+import subprocess
+import traceback
+
+min_elapse = 1 # in minute
+min_cpu_efficiency = 25
+min_mem_efficiency = 25
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Process some integers.')
+    parser.add_argument('integers', metavar='N', type=int,
+                                help='an integer for the accumulator')
+    args = parser.parse_args()
+    job_id = args.integers
+    command = "seff {}".format(job_id)
+    seff_result = subprocess.check_output(command, shell=True).decode()
+    try:
+        nodes = int(
+            re.search(r'Nodes: (.*?)\n', seff_result).group(1))
+        ncpus = int(
+            re.search(r'Cores per node: (.*?)\n', seff_result).group(1))
+        cpu_efficiency = float(
+            re.search(r'CPU Efficiency: (.*?)%', seff_result).group(1))
+        mem_efficiency = float(
+            re.search(r'Memory Efficiency: (.*?)%', seff_result).group(1))
+
+        job_walltime_str = re.search(r'Job Wall-clock time: (.*?)\n', seff_result).group(1)
+        hours, mins, _ = job_walltime_str.split(':')
+        if '-' in hours:
+            days, hours = hours.split('-')
+            hours = int(hours) + 24 * int(days)
+        job_walltime = 60 * int(hours) + int(mins)
+
+        if job_walltime >= min_elapse and cpu_efficiency < min_cpu_efficiency and mem_efficiency < min_mem_efficiency:
+            print(seff_result)
+
+            if nodes > 1:
+                suggest_str = "Suggestion: Please try to use fewer nodes to run your job."
+            elif nodes == 1 and ncpus == 40:
+                suggest_str = "Suggestion: Please try to use fewer cores and submit your job to **small** partition."
+            else:
+                suggest_str = "Suggestion:\n \
+    1. Use fewer nodes if your jobs are multi-node.\n \
+    2. Use fewer cores, and submit your job to partition **small**."
+
+            print(suggest_str)
+
+    except Exception:
+        logging.error(traceback.format_exc())
+
+
+if __name__ == "__main__":
+    main()

@@ -4,7 +4,7 @@ from JobCritic import JobCritic
 
 def main():
     parser = argparse.ArgumentParser(description='seff scripts')
-    parser.add_argument('-S', '--starttime', default='`date +"%Y-%m-%dT%T" -d \'24 hour ago\'`')
+    parser.add_argument('-S', '--starttime', default='`date +"%Y-%m-%dT%T" -d \'4 hour ago\'`')
     parser.add_argument('-E', '--endtime', default='`date +"%Y-%m-%dT%T"`')
     parser.add_argument('-A', '--accounts')
     parser.add_argument('-u', '--user')
@@ -20,6 +20,8 @@ def main():
     low_cpu = 25
     low_memory = 25
 
+    acct_info_path = "./account_info.csv"
+
     # set debug=False to quiet STD output
     watcher = JobCritic(starttime=args.starttime,
                         endtime=args.endtime,
@@ -31,12 +33,20 @@ def main():
                         debug=args.debug)
 
     # you can add or modefy filters diretly
-    watcher.valid_filters.append(lambda job: 'phyzpj-jxwang' not in job.user)
-    watcher.valid_filters.append(lambda job: 'hazenet-pg4' not in job.user)
-    watcher.valid_filters.append(lambda job: 'user' not in job.user)
-    watcher.valid_filters.append(lambda job: 'esechzh-air4' not in job.user)
+    watcher.valid_filters.append(
+        lambda job: 'phyzpj-jxwang' not in job.user
+    )
+    watcher.valid_filters.append(
+        lambda job: 'user' not in job.user
+    )
+    watcher.valid_filters.append(
+        lambda job: 'esechzh-air4' not in job.user
+    )
+    watcher.valid_filters.append(
+        lambda job: 'medhjy' not in job.user
+    )
     ineffective_jobs = watcher.get_ineffective_jobs()
-    watcher.send_email_internal(ineffective_jobs)
+    watcher.send_email_user(ineffective_jobs, acct_info_path)
 
 
 if __name__ == "__main__":

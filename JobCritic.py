@@ -23,12 +23,13 @@ class MailDeliver():
         send_cmd = "echo \"{}\" | smail -s '{}' {}".format(content, subject, recv_email)
         return_code = os.system(send_cmd)
         if return_code != 0:
-            logger.warning("Failer to deliver email to {}".format(recv_email))
+            logger.warning("Failed to deliver email to {}".format(recv_email))
         else:
             logger.info("Delivered email to {}".format(recv_email))
 
 
 class SlurmJob():
+
     def __init__(self, jobid, account, user, state, elapsed):
         self.jobid = jobid
         self.account = account
@@ -40,15 +41,23 @@ class SlurmJob():
         command = "seff {}".format(self.jobid)
         self.seff_result = subprocess.check_output(command, shell=True).decode()
         try:
-            self.cpu_efficiency = float(re.search(r'CPU Efficiency: (.*?)%', self.seff_result).group(1))
-            self.mem_efficiency = float(re.search(r'Memory Efficiency: (.*?)%', self.seff_result).group(1))
+            self.cpu_efficiency = float(
+                re.search(r'CPU Efficiency: (.*?)%', self.seff_result).group(1))
+            self.mem_efficiency = float(
+                re.search(r'Memory Efficiency: (.*?)%', self.seff_result).group(1))
+            core_walltime_str = re.search(r'of (.*?) core-walltime', self.seff_result).group(1)
+            hours, mins, _ = core_walltime_str.split(':')
+            if '-' in hours:
+                days, hours = hours.split('-')
+                hours = int(hours) + 24 * int(days)
+            self.core_walltime = 60 * int(hours) + int(mins)
         except Exception:
             logging.error(traceback.format_exc())
 
     def sacct(self):
         command = "sacct -j {} -p -o ACCOUNT,WorkDir,NNodes,NCPUS".format(self.jobid)
         sacct_result = subprocess.check_output(command, shell=True).decode()
-        self.account, self.workdir, self.nnodes, self.ncpus = sacct_result.split()[1].split('|')[:4]
+        self.account, self.workdir, self.nnodes, self.ncpus = sacct_result.split('\n')[1].split('|')[:4]
         self.nnodes, self.ncpus = int(self.nnodes), int(self.ncpus)
 
 
@@ -64,6 +73,7 @@ class JobCritic():
                  low_cpu=25,
                  low_memory=25,
                  debug=False):
+        self.acct_info = {}
         self.starttime = starttime
         self.endtime = endtime
         self.acct = acct
@@ -91,6 +101,16 @@ class JobCritic():
 
         self.internal_email = "hpcalarm@sjtu.edu.cn"
 
+    def read_acct_info(self, acct_info_path):
+        with open(acct_info_path, 'r') as acct_f:
+            lines = acct_f.readlines()
+            for line in lines:
+                if "acct-" not in line:
+                    continue
+                acct, email = line.split(',')[2], line.split(',')[3]
+                email = email.split(';')[0]
+                self.acct_info[acct] = email
+
     def init_logger(self, debug):
         ch = logging.StreamHandler()
         ch.setFormatter(logging.Formatter('%(asctime)s - %(message)s'))
@@ -113,7 +133,7 @@ class JobCritic():
         parameter += '-u {} '.format(self.user) if self.user else ''
         parameter += '-S {} '.format(self.starttime) if self.starttime else ''
         parameter += '-E {} '.format(self.endtime) if self.endtime else ''
-        sacct_command = "sacct --partition {} -a -o {} {}".format(','.join(self.partition),
+        sacct_command = "sacct --partition {} -a -o {} {} -P".format(','.join(self.partition),
                                                                   ','.join(self.sacct_query),
                                                                   parameter)
         return sacct_command
@@ -131,8 +151,10 @@ class JobCritic():
 
         all_jobs = {}
         for line in sacct_result:
-            if len(line.split()) == len(self.sacct_query):
-                jobid, account, user, state, elapsed = line.split()
+            if len(line.split('|')) == len(self.sacct_query):
+                jobid, account, user, state, elapsed = line.split('|')
+                if user == '':
+                    continue
                 # for array jobs
                 jobid = jobid.split('_')[0]
                 hours, mins, _ = elapsed.split(':')
@@ -145,7 +167,11 @@ class JobCritic():
         self.logger.info("There are {} jobs before apply filters.".format(len(all_jobs)))
         if apply_filters:
             self.filters_info(self.valid_filters)
-            all_jobs = {job: all_jobs[job] for job in all_jobs if self.applyfilters(self.valid_filters, all_jobs[job])}
+            all_jobs = {
+                job: all_jobs[job]
+                for job in all_jobs
+                if self.applyfilters(self.valid_filters, all_jobs[job])
+            }
         self.logger.info("There are {} valid jobs.".format(len(all_jobs)))
 
         return all_jobs
@@ -189,16 +215,65 @@ class JobCritic():
         email_content = '=' * 30 + '\n'
         for acct in low_efficience_jobs:
             email_content += acct + '\n'
-            email_content += "You have {} inefficiency jobs.".format(len(low_efficience_jobs[acct])) + '\n'
+            core_walltime_sum = 0
             for jobid in low_efficience_jobs[acct]:
-                this_job = low_efficience_jobs[acct][jobid]
-                email_content += '-' * 20 + '\n'
-                email_content += this_job.seff_result.rstrip() + '\n'
-                email_content += "WorkDir: {}".format(this_job.workdir) + '\n'
-                email_content += self.get_suggestion(this_job.nnodes, this_job.ncpus) + '\n'
-            email_content += '=' * 30 + '\n'
+                core_walltime_sum += low_efficience_jobs[acct][jobid].core_walltime
+            email_content += "You have {} inefficiency jobs for a total Core-Walltime of {} minutes.".format(
+                leechzh-air4(low_efficience_jobs[acct]), core_walltime_sum) + '\n'
+            num_content = 0
+            for jobid in low_efficience_jobs[acct]:
+                if num_content == 10:
+                    email_content += '-' * 20 + '\n'
+                    email_content += 'Same for: '
+                    email_content += str(jobid) + ' '
+                elif num_content > 10:
+                    email_content += str(jobid) + ' '
+                else:
+                    this_job = low_efficience_jobs[acct][jobid]
+                    email_content += '-' * 20 + '\n'
+                    email_content += this_job.seff_result.rstrip() + '\n'
+                    email_content += "WorkDir: {}".format(this_job.workdir) + '\n'
+                    email_content += self.get_suggestion(this_job.nnodes, this_job.ncpus) + '\n'
+                num_content += 1
+            email_content += '\n' + '=' * 30 + '\n'
         self.mailman.send_email(self.internal_email, email_subject, email_header + email_content,
                                 self.logger)
 
-    def send_email_user(self, emails):
-        pass
+    def send_email_user(self, low_efficience_jobs, acct_info_path):
+        self.read_acct_info(acct_info_path)
+
+        email_subject = "[SJTU HPC Team] Inefficiency Jobs Reports"
+        email_header = "Dear User: \n\n"
+        email_header += "This is Inefficiency Jobs Report from {} to {}".format(
+            self.starttime, self.endtime) + '\n\n'
+        email_footer = "If you want to unsubscribe, please send email to hpc@sjtu.edu.cn.\n\nBest\nSJTU HPC Team\n"
+
+        for acct in low_efficience_jobs:
+            email_content = email_header
+            core_walltime_sum = 0
+            for jobid in low_efficience_jobs[acct]:
+                core_walltime_sum += low_efficience_jobs[acct][jobid].core_walltime
+            email_content += "You have {} inefficiency jobs for a total Core-Walltime of {} minutes.".format(
+                len(low_efficience_jobs[acct]), core_walltime_sum) + '\n'
+            num_content = 0
+            for jobid in low_efficience_jobs[acct]:
+                if num_content == 10:
+                    email_content += '-' * 20 + '\n'
+                    email_content += 'Same for: '
+                    email_content += str(jobid) + ' '
+                elif num_content > 10:
+                    email_content += str(jobid) + ' '
+                else:
+                    this_job = low_efficience_jobs[acct][jobid]
+                    email_content += '-' * 20 + '\n'
+                    email_content += this_job.seff_result.rstrip() + '\n'
+                    email_content += "WorkDir: {}".format(this_job.workdir) + '\n'
+                    email_content += self.get_suggestion(this_job.nnodes, this_job.ncpus) + '\n'
+                num_content += 1
+            email_content += '\n' + '=' * 30 + '\n'
+            email_content += email_footer
+            if acct in self.acct_info:
+                self.mailman.send_email(self.acct_info[acct], email_subject, email_content,
+                                        self.logger)
+            else:
+                self.logger.warning("No email infomation for {}.".format(acct))
