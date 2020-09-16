@@ -37,14 +37,14 @@ def main():
         job_walltime = 60 * int(hours) + int(mins)
 
         if job_walltime >= min_elapse and cpu_efficiency < min_cpu_efficiency and mem_efficiency < min_mem_efficiency:
-            print(seff_result)
+            print("This job is an inefficient job.\nSuggestion: \n")
 
             if nodes > 1:
-                suggest_str = "Suggestion: Please try to use fewer nodes to run your job."
+                suggest_str = "Please try to use fewer nodes to run your job."
             elif nodes == 1 and ncpus == 40:
-                suggest_str = "Suggestion: Please try to use fewer cores and submit your job to **small** partition."
+                suggest_str = "Please try to use fewer cores and submit your job to **small** partition."
             else:
-                suggest_str = "Suggestion:\n \
+                suggest_str = " \
     1. Use fewer nodes if your jobs are multi-node.\n \
     2. Use fewer cores, and submit your job to partition **small**."
 
